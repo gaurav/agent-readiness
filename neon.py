@@ -4,6 +4,7 @@
 """Readiness index for NEON data products: how much a user has to know, times how much it is used.
 
     uv run neon.py > readiness.md          # the table, Markdown, to stdout
+    uv run neon.py --product DP1.20120.001 # one product's change log, classified, one GET
     uv run neon.py --self-check            # same run, then asserts on the result
 
 For every product in NEON's data API this reads the change log its stewards have filed and sorts
@@ -153,17 +154,35 @@ def render(rows, papers, malformed):
         if not r["papers"] or not r["entries"]:
             continue
         out += [f"### {r['code']} {r['name']} ({r['papers']} papers, {r['changed']} changed, {r['fault']} fault)", ""]
-        for k, c in r["entries"]:
-            span = f"{(c.get('dateRangeStart') or '')[:10]} to {(c.get('dateRangeEnd') or '')[:10]}"
-            where = c.get("locationAffected") or ""
-            issue = " ".join((c.get("issue") or "").split())
-            fix = " ".join((c.get("resolution") or "").split())
-            out.append(f"- *{k}*, **{span}**, {where}: {issue} **Resolution:** {fix}")
-        out.append("")
+        out += [entry_line(k, c) for k, c in r["entries"]] + [""]
     return "\n".join(out)
 
 
+def entry_line(k, c):
+    span = f"{(c.get('dateRangeStart') or '')[:10]} to {(c.get('dateRangeEnd') or '')[:10]}"
+    where = c.get("locationAffected") or ""
+    issue = " ".join((c.get("issue") or "").split())
+    fix = " ".join((c.get("resolution") or "").split())
+    return f"- *{k}*, **{span}**, {where}: {issue} **Resolution:** {fix}"
+
+
+def product_changelog(code):
+    """One product's change log, every entry with its kind, as Markdown: one GET, no Zotero."""
+    d = get(f"{API}/products/{code}")["data"]
+    logs = d.get("changeLogs") or []
+    out = [f"# {code} {d['productName']}: change log, {len(logs)} entries, read {datetime.date.today()} by neon.py "
+           f"from https://github.com/gaurav/agent-readiness", "",
+           f"Source: https://data.neonscience.org/api/v0/products/{code} (`changeLogs`); the same entries are the "
+           f"issue log on https://data.neonscience.org/data-products/{code}. Each is prefixed with the kind the "
+           "classifier assigns: flagged, changed, fault, gap or other. Entries are in the API's order.", ""]
+    out += [entry_line(kind(c), c) for c in logs]
+    return "\n".join(out) + "\n"
+
+
 if __name__ == "__main__":
+    if "--product" in sys.argv:
+        sys.stdout.write(product_changelog(sys.argv[sys.argv.index("--product") + 1]))
+        sys.exit()
     papers, malformed = papers_per_product()
     rows = product_rows(papers)
     text = render(rows, papers, malformed)
@@ -178,6 +197,8 @@ if __name__ == "__main__":
         assert kind({"issue": "Taxonomic synonomy", "resolution": "began using the scientificName X"}) == "changed"
         assert kind({"issue": "Safety measures during the COVID-19 pandemic", "resolution": "Sampling reduced."}) == "gap"
         assert kind({"issue": "Dissolved Oxygen sensor is drifting.", "resolution": "Sensor was cleaned."}) == "fault"
+        one = product_changelog("DP1.20120.001")
+        assert one.count("\n- *") == by_code["DP1.20120.001"]["logs"], "--product lists one line per entry"
         print(f"self-check ok: {len(rows)} products, top {rows[0]['code']} {rows[0]['name']}", file=sys.stderr)
     else:
         sys.stdout.write(text)

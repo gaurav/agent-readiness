@@ -123,11 +123,17 @@ uv run neon.py --self-check       # the same run, then asserts on the result and
 
 Standard library only, so `uv run` needs nothing installed; the script also runs from its raw
 GitHub URL. No token: the NEON catalogue endpoints and Zotero's group API answer anonymously.
+`uv run neon.py --product DP1.20120.001` prints one product's change log, classified, in one GET.
+
+A worked example of the whole method on one product, the macroinvertebrate collection, is in
+[`examples/NEON/`](examples/NEON/README.md): the dataset, its change log read as a recipe, the
+silent errors an agent makes on a plausible question, what the index saw and missed, and what
+each probe outcome would mean.
 
 ## Status
 
-A first index over one repository, with its change-log entries classified by keyword rules, and
-the probes designed but not built. Next, in order: run the *changed* entries of one product as
+A first index over one repository, with its change-log entries classified by keyword rules, the
+probes designed but not built, and one worked example (`examples/NEON/`). Next, in order: run the *changed* entries of one product as
 probes (does the agent's answer differ across the span?); a second source (GBIF or EDI) so the
 index is shown to be a method; a better classifier if the keyword rules misfile enough to matter.
 Issues and pull requests are welcome, in particular on the classification rules and on
