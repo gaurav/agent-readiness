@@ -15,14 +15,33 @@ an agent most needs them.
 
 Two kinds of measurement, one built and one not.
 
-**A readiness index, model-free (built).** For each dataset in a repository, how much a user has
-to know and how much the dataset is used: the change-log entries its stewards have filed, how many
-are unresolved, the sites and dates they affect, the documents a user is expected to read, and the
-number of papers that use it. Sorted by papers times change-log entries, it ranks where the
-semantics have moved under old code and many people rely on it. This is a proxy. It needs no
-model, and it cannot tell a change log that is a list of sensor faults (handled by honouring the
-flag column) from one that changes what a column means (handled only by reading it); the table's
-columns are there so a reader can re-sort by what matters to them.
+**A readiness index, model-free (built).** For each dataset in a repository, what its stewards have
+written down that the schema does not say, and how many people rely on it. The source is the
+change log the stewards keep: each entry says what went wrong, for which sites and dates, and
+what was done about it. The index reads every entry and sorts it by what a user has to *do*
+about it:
+
+| Kind | What the entry says | What a user has to do |
+|---|---|---|
+| *flagged* | a fault whose resolution was to flag the affected rows | honour the quality-flag column; nothing to read |
+| *changed* | the data or its meaning changed: a taxonomic synonym adopted, a sampling point renamed, a design reduced, a release reprocessed, an algorithm corrected | read the entry; the correction is nowhere in the data |
+| *fault* | a sensor fault with no flag mentioned: a probe calibrated ten times too high, a sonde drifting until it was cleaned | treat the span as suspect; nothing in the data says so |
+| *gap* | sampling did not happen: a pandemic, a flooded road, a site closed | know that absence is not zero |
+| *other* | the rest | read it |
+
+The sort key is papers times entries not handled by a flag. A count of all entries, which is
+where this started, measures how observable a product's history is rather than how hard it is to
+use: a rain gauge with five hundred flagged clogs is handled by one filter, and a repository that
+keeps no change log would score as ready, which is backwards. The classification is keyword rules
+over the entry text and will misfile some entries; the table carries every kind as a column so
+a reader can re-sort, and the rules are the first thing to improve.
+
+The entries themselves are the index's real product. Each *changed* or *fault* entry, with its
+span and sites, is a question an agent should answer differently on either side of the span,
+which makes it a ready-made probe with no corruption to invent; and the *changed* entries of a
+product, read together, are most of the transformation recipe that product needs and does not
+publish: map these synonyms, drop or flag the years before the effort was standardised, rename
+these points. The table lists them, per product, after the ranking.
 
 **Probes, run with an LLM agent (next).** The measurement the index stands in for:
 
@@ -43,10 +62,13 @@ which model ran them.
 
 The first index is over the [National Ecological Observatory Network](https://www.neonscience.org/)'s
 202 data products, because NEON makes it computable in an afternoon: an anonymous API whose
-product records carry change logs and document lists, and a
-[Zotero library](https://www.zotero.org/groups/2665225/neon_publications) of publications tagged
-by product code. NEON's change logs are a sign of stewardship, not of trouble; a repository with
-no change log is not more ready, only less observable. The method is meant for any repository
+product records carry change logs with dates, sites, issue and resolution, and document lists,
+and a [Zotero library](https://www.zotero.org/groups/2665225/neon_publications) of publications
+tagged by product code. NEON's change logs are a sign of stewardship, not of trouble: a product
+with many entries is one whose stewards wrote down what they found, and the index rewards that
+by turning the entries into probes and recipe drafts. A repository with no change log is not more
+ready, only less observable, and its entries would have to be recovered some other way (release
+diffs, user forums, the cleaning packages its community has written). The method is meant for any repository
 that keeps the equivalent records, and the second source is what will make that true. The
 candidates: [GBIF](https://www.gbif.org/), whose dataset DOIs have tracked citations and whose
 occurrence records carry per-record issue flags, and the
@@ -95,8 +117,8 @@ How the two could connect:
 ## Running
 
 ```sh
-uv run neon.py > readiness.md     # the NEON index as a Markdown table, about 230 GETs at one a second
-uv run neon.py --self-check       # the same run, then asserts on the result
+uv run neon.py > readiness.md     # the ranking, then the changed and fault entries per product; about 230 GETs at one a second
+uv run neon.py --self-check       # the same run, then asserts on the result and on the classifier
 ```
 
 Standard library only, so `uv run` needs nothing installed; the script also runs from its raw
@@ -104,11 +126,12 @@ GitHub URL. No token: the NEON catalogue endpoints and Zotero's group API answer
 
 ## Status
 
-A first index over one repository, and the probes designed but not built. Next, in order: a
-second source (GBIF or EDI) so the index is shown to be a method; the flag-honoured-unprompted
-probe over the top of the NEON table; the with-and-without-documentation probe on one product.
-Issues and pull requests are welcome, in particular on what the index should weigh and on
-repositories whose records would let it run.
+A first index over one repository, with its change-log entries classified by keyword rules, and
+the probes designed but not built. Next, in order: run the *changed* entries of one product as
+probes (does the agent's answer differ across the span?); a second source (GBIF or EDI) so the
+index is shown to be a method; a better classifier if the keyword rules misfile enough to matter.
+Issues and pull requests are welcome, in particular on the classification rules and on
+repositories whose records would let the index run.
 
 ## Licence
 

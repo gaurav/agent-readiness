@@ -6,12 +6,16 @@
     uv run neon.py > readiness.md          # the table, Markdown, to stdout
     uv run neon.py --self-check            # same run, then asserts on the result
 
-For every product in NEON's data API this reads the change log its stewards have filed (entries,
-how many are unresolved, the sites and dates they affect) and the documents a user is expected to
-read, and counts the papers tagged with the product code in NEON's Zotero publications library
-(group 2665225, whose tags carry item counts). The table is sorted by papers times change-log
-entries: a proxy for where the semantics have moved under old code and many people are relying on
-it. It is a proxy only; see README.md for what it stands in for and what it misses.
+For every product in NEON's data API this reads the change log its stewards have filed and sorts
+each entry by what a user has to do about it: `flagged` (the fix is already in the product's
+quality-flag columns: a clogged gauge, a drifting sensor), `changed` (the data or its meaning
+changed: a taxonomic synonym, a renamed sampling point, a reduced design, a reprocessed release),
+`gap` (sampling did not happen: a pandemic, a closed road), or `other`. It also counts the
+documents a user is expected to read and the papers tagged with the product code in NEON's Zotero
+publications library (group 2665225, whose tags carry item counts). The table is sorted by papers
+times `changed` entries, which is where many people rely on a product whose meaning moved without
+a flag to say so; the `changed` entries themselves follow the table, as the seed list for probes
+and the draft of a recipe. See README.md for what this stands in for and what it misses.
 
 NEON is the testbed, not the target: its API, change logs and tagged publication library make
 the index computable in an afternoon. The method is meant for any repository that keeps the
@@ -30,6 +34,36 @@ import urllib.request
 API = "https://data.neonscience.org/api/v0"
 ZOTERO = "https://api.zotero.org/groups/2665225"  # NEON's publications library, tagged by product code
 PRODUCT = re.compile(r"^DP\d\.\d{5}\.\d{3}$")
+
+# ponytail: keyword rules, in priority order; a model over the entry text is the upgrade if these mislead
+GAP = re.compile(r"covid|pandemic|quarantin|halt|not (be )?sampled|no sampling|closed|flood|fire|hurricane|"
+                 r"suspend|cancel|operations ended", re.I)
+FLAGGED = re.compile(r"flag|offline|removed from|set to (null|na)|redact|data (were|was|have been) removed", re.I)
+CHANGED = re.compile(r"taxonom|synonym|effort|renam|named|called|format|field|reprocess|republish|design|method|"
+                     r"protocol|unit|duplicat|obfuscat|interval|reduc|increas|discontinu|convert|identif|relocat|"
+                     r"algorithm|atbd|equation|table|column|swap", re.I)
+FAULT = re.compile(r"sensor|sonde|probe|drift|clog|calibrat|power|battery|buried|foul|wiper|transducer|gauge|"
+                   r"malfunction|logger|cable|firmware", re.I)
+
+
+def kind(entry):
+    """What a user has to do about a change-log entry, from its text.
+
+    gap: sampling did not happen; flagged: the fix is in the quality-flag columns; changed: the data or its
+    meaning changed and only the entry says so; fault: a sensor fault with no flag mentioned, an unflagged
+    bad span; other.
+    """
+    issue, resolution = entry.get("issue") or "", entry.get("resolution") or ""
+    text = issue + " " + resolution
+    if GAP.search(issue):
+        return "gap"
+    if FLAGGED.search(resolution):
+        return "flagged"
+    if CHANGED.search(text):
+        return "changed"
+    if FAULT.search(text):
+        return "fault"
+    return "other"
 
 
 def get(url):
@@ -72,18 +106,23 @@ def product_rows(papers):
         sites = set()
         for c in logs:
             sites.update(s.strip() for s in (c.get("locationAffected") or "").split(",") if s.strip())
+        kinds = [kind(c) for c in logs]
         rows.append({
             "code": code, "name": p["productName"], "status": p["productStatus"],
             "papers": papers.get(code, 0),
             "logs": len(logs),
+            "changed": kinds.count("changed"), "fault": kinds.count("fault"), "flagged": kinds.count("flagged"),
+            "gap": kinds.count("gap"), "other": kinds.count("other"),
+            "unflagged": len(logs) - kinds.count("flagged"),
+            "entries": [(k, c) for c, k in zip(logs, kinds) if k in ("changed", "fault")],
             "unresolved": sum(1 for c in logs if not c.get("resolvedDate")),
             "sites": "all" if "All" in sites else str(len(sites)),
             # many logs start on 2010-01-01 or 2012-01-01, before the site existed: a default, not a date
             "since": min((c["dateRangeStart"][:10] for c in logs if c.get("dateRangeStart")), default=""),
             "docs": len(d.get("specs") or []),
         })
-    # ponytail: papers x change-log entries is a naive score; weight by unresolved or by months if it misleads
-    rows.sort(key=lambda r: (-(r["papers"] * r["logs"]), -r["logs"], -r["papers"], r["code"]))
+    # ponytail: papers x unflagged entries is a naive score; weight by kind or by span if it misleads
+    rows.sort(key=lambda r: (-(r["papers"] * r["unflagged"]), -r["unflagged"], -r["papers"], r["code"]))
     return rows
 
 
@@ -94,15 +133,34 @@ def render(rows, papers, malformed):
            f"code in NEON's Zotero library ({sum(papers.values())} product tags over {len(papers)} codes; "
            f"{len(malformed)} malformed product tags ignored: {', '.join(sorted(malformed))}); "
            f"{sum(1 for r in rows if r['logs'])} have change-log entries.", "",
-           "Sorted by papers × change-log entries. *Sites* is the distinct sites a change log names, or *all*; "
-           "*since* is the earliest date a change log affects (often a placeholder); *docs* is the product's "
-           "user guide, protocol and quick-start files.", "",
-           "| Code | Name | Status | Papers | Change logs | Unresolved | Sites | Since | Docs |",
-           "|---|---|---|---|---|---|---|---|---|"]
+           "Sorted by papers × entries not handled by a flag. Each change-log entry is sorted by what a user "
+           "has to do about it: *flagged*, the fix is in the quality-flag columns; *changed*, the data or its "
+           "meaning changed and only the entry says so; *fault*, a sensor fault with no flag mentioned, so an "
+           "unflagged bad span; *gap*, sampling did not happen; *other*. *Sites* is the distinct sites the log "
+           "names, or *all*; *since* is the earliest date it affects (often a placeholder); *docs* is the "
+           "product's user guide, protocol and quick-start files.", "",
+           "| Code | Name | Status | Papers | Changed | Fault | Gap | Other | Flagged | Unresolved | Sites | Since | Docs |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
-        out.append(f"| {r['code']} | {r['name']} | {r['status']} | {r['papers']} | {r['logs']} | {r['unresolved']} | "
-                   f"{r['sites']} | {r['since']} | {r['docs']} |")
-    return "\n".join(out) + "\n"
+        out.append(f"| {r['code']} | {r['name']} | {r['status']} | {r['papers']} | {r['changed']} | {r['fault']} | "
+                   f"{r['gap']} | {r['other']} | {r['flagged']} | {r['unresolved']} | {r['sites']} | {r['since']} | "
+                   f"{r['docs']} |")
+    out += ["", "## Entries that changed the data or its meaning, or left an unflagged fault", "",
+            "For products with at least one tagged paper, every *changed* and *fault* entry: the span and sites it "
+            "affects, what was wrong, and what was done. Each is a question an agent should answer differently on "
+            "either side of the span, and the *changed* ones together are the draft of the product's recipe.", ""]
+    for r in rows:
+        if not r["papers"] or not r["entries"]:
+            continue
+        out += [f"### {r['code']} {r['name']} ({r['papers']} papers, {r['changed']} changed, {r['fault']} fault)", ""]
+        for k, c in r["entries"]:
+            span = f"{(c.get('dateRangeStart') or '')[:10]} to {(c.get('dateRangeEnd') or '')[:10]}"
+            where = c.get("locationAffected") or ""
+            issue = " ".join((c.get("issue") or "").split())
+            fix = " ".join((c.get("resolution") or "").split())
+            out.append(f"- *{k}*, **{span}**, {where}: {issue} **Resolution:** {fix}")
+        out.append("")
+    return "\n".join(out)
 
 
 if __name__ == "__main__":
@@ -114,7 +172,12 @@ if __name__ == "__main__":
         assert len(rows) > 150, len(rows)
         assert by_code["DP1.20120.001"]["logs"] > 0, "macroinvertebrates should carry change-log entries"
         assert by_code["DP1.20120.001"]["papers"] > 0, "macroinvertebrates should have tagged papers"
-        assert text.count("\n|") == len(rows) + 2, "one table row per product plus header and rule"
+        assert by_code["DP1.20120.001"]["changed"] > 0, "the synonymy and effort entries should classify as changed"
+        assert by_code["DP1.00006.001"]["flagged"] > by_code["DP1.00006.001"]["changed"], "precipitation is mostly flagged"
+        assert kind({"issue": "Sensor clogged", "resolution": "Applied manual flagging."}) == "flagged"
+        assert kind({"issue": "Taxonomic synonomy", "resolution": "began using the scientificName X"}) == "changed"
+        assert kind({"issue": "Safety measures during the COVID-19 pandemic", "resolution": "Sampling reduced."}) == "gap"
+        assert kind({"issue": "Dissolved Oxygen sensor is drifting.", "resolution": "Sensor was cleaned."}) == "fault"
         print(f"self-check ok: {len(rows)} products, top {rows[0]['code']} {rows[0]['name']}", file=sys.stderr)
     else:
         sys.stdout.write(text)
